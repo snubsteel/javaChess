@@ -39,6 +39,21 @@ java -cp "out;res" main.Main
 
 When the game starts, choose either `Human vs Human` or `Human vs AI`. If AI mode is selected, choose a difficulty.
 
+## Package
+
+To build a runnable JAR:
+
+```powershell
+New-Item -ItemType Directory -Force dist
+jar cfe dist\java-chess.jar main.Main -C out . -C res .
+```
+
+Run the JAR with:
+
+```powershell
+java -jar dist\java-chess.jar
+```
+
 ## Project Structure
 
 ```text

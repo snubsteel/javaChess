@@ -226,6 +226,9 @@ public class GamePanel extends JPanel implements Runnable {
         Move move = ai.getMove(this, aiDifficulty, aiColor);
         if (move != null) {
             applyMove(move);
+        } else if (!gameover && !stalemate) {
+            // AI has no legal moves — treat as stalemate to avoid infinite retry loop
+            stalemate = true;
         }
     }
 
@@ -583,6 +586,81 @@ public class GamePanel extends JPanel implements Runnable {
     }
 
     // -----------------------------------------------------------------
+    // Board evaluation
+    // -----------------------------------------------------------------
+    /**
+     * Returns the material score for {@code color} minus the opponent's. Reads
+     * the authoritative {@code pieces} list; does not mutate any state.
+     */
+    public int evaluateBoard(int color) {
+        int score = 0;
+        for (Piece p : pieces) {
+            int value = materialValue(p.type) + positionalBonus(p);
+            if (p.color == color) {
+                score += value;
+            } else {
+                score -= value;
+            }
+        }
+        return score;
+    }
+
+    private static int materialValue(Type type) {
+        switch (type) {
+            case PAWN:
+                return 100;
+            case KNIGHT:
+                return 320;
+            case BISHOP:
+                return 330;
+            case ROOK:
+                return 500;
+            case QUEEN:
+                return 900;
+            case KING:
+                return 20000;
+            default:
+                return 0;
+        }
+    }
+
+    private static int positionalBonus(Piece p) {
+        switch (p.type) {
+            case PAWN:
+                return centralBonus(p.col, p.row) + pawnAdvanceBonus(p.color, p.row);
+            case KNIGHT:
+            case BISHOP:
+            case QUEEN:
+                return centralBonus(p.col, p.row);
+            default:
+                return 0;
+        }
+    }
+
+    // Distance from the nearest center square (cols 3-4, rows 3-4).
+    // Returns 20/10/5/0 for dist 0/1/2/3+.
+    private static int centralBonus(int col, int row) {
+        int colDist = Math.min(Math.abs(col - 3), Math.abs(col - 4));
+        int rowDist = Math.min(Math.abs(row - 3), Math.abs(row - 4));
+        int dist = colDist + rowDist;
+        if (dist == 0) {
+            return 20;
+        }
+        if (dist == 1) {
+            return 10;
+        }
+        if (dist == 2) {
+            return 5;
+        }
+        return 0;
+    }
+
+    // 5 points per step of advancement; 0 at starting row, up to 25 at the rank before promotion.
+    private static int pawnAdvanceBonus(int color, int row) {
+        return color == WHITE ? (6 - row) * 5 : (row - 1) * 5;
+    }
+
+    // -----------------------------------------------------------------
     // Legal-move generation
     // -----------------------------------------------------------------
     /**
@@ -671,6 +749,20 @@ public class GamePanel extends JPanel implements Runnable {
             gameover = savedGameover;
             stalemate = savedStalemate;
         }
+    }
+
+    /**
+     * Returns an opaque snapshot of the full game state for later restoration.
+     */
+    public Object takeSnapshot() {
+        return new GameStateSnapshot();
+    }
+
+    /**
+     * Restores state from a snapshot obtained via {@link #takeSnapshot()}.
+     */
+    public void restoreSnapshot(Object snap) {
+        ((GameStateSnapshot) snap).restore();
     }
 
     /**
