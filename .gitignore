@@ -41,3 +41,6 @@ out/
 
 # Windows files
 Thumbs.db
+
+# Local AI tool files
+.claude/

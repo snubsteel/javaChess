@@ -40,14 +40,24 @@ public class GamePanel extends JPanel implements Runnable {
     boolean gameover;
     boolean stalemate;
 
-    public GamePanel() {
+    // GAME MODE / AI
+    GameMode gameMode;
+    AIDifficulty aiDifficulty;
+    ChessAI ai;
+    int aiColor = BLACK;
+
+    public GamePanel(GameMode mode, AIDifficulty difficulty) {
         setPreferredSize(new Dimension(GAME_WIDTH, GAME_HEIGHT));
         setBackground(Color.black);
         addMouseMotionListener(mouse);
         addMouseListener(mouse);
 
+        gameMode = mode;
+        aiDifficulty = difficulty;
+        ai = new ChessAI();
+
         setPieces();
-       // testIllegal();
+        // testIllegal();
         copyPieces(pieces, simPieces);
     }
 
@@ -142,66 +152,81 @@ public class GamePanel extends JPanel implements Runnable {
 
         } else if (gameover == false && stalemate == false) {
 
-            // MOUSE BUTTON PRESSED
-            if (mouse.pressed) {
-                if (activeP == null) {
-                    // If the activeP is null, check if you can pick up a piece.
-                    for (Piece piece : simPieces) {
-                        // If the mouse in on an ally piece, pick it up as the activeP.
-                        if (piece.color == currentColor && piece.col == mouse.x / Board.SQUARE_SIZE &&
-                                piece.row == mouse.y / Board.SQUARE_SIZE) {
+            if (gameMode == GameMode.HUMAN_VS_AI && currentColor == aiColor) {
+                // AI TURN
+                doAITurn();
 
-                            activeP = piece;
-                        }
-                    }
-                } else {
-                    // If the player is holding a piece, simulate the move.
-                    simulate();
-                }
-            }
+            } else {
+                // HUMAN TURN
 
-            // MOUSE BUTTON RELEASED
-            if (mouse.pressed == false) {
+                // MOUSE BUTTON PRESSED
+                if (mouse.pressed) {
+                    if (activeP == null) {
+                        // If the activeP is null, check if you can pick up a piece.
+                        for (Piece piece : simPieces) {
+                            // If the mouse in on an ally piece, pick it up as the activeP.
+                            if (piece.color == currentColor && piece.col == mouse.x / Board.SQUARE_SIZE
+                                    && piece.row == mouse.y / Board.SQUARE_SIZE) {
 
-                if (activeP != null) {
-
-                    if (validSquare) {
-
-                        // MOVE CONFIRMED
-
-                        // Update the piece list in case a piece has been captured and removed during
-                        // the simulation
-                        copyPieces(simPieces, pieces);
-                        activeP.updatePosition();
-                        if (castlingP != null) {
-                            castlingP.updatePosition();
-                        }
-
-                        if (isKingInCheck() && isCheckMate()) {
-                            System.out.println("King is in check");
-                            gameover = true;
-                        } else if (isStaleMate() && isKingInCheck() == false) {
-                            stalemate = true;
-                        } else { // The game is still going on
-                            if (canPromote()) {
-                                promotion = true;
-                            } else {
-                                changePlayer();
+                                activeP = piece;
                             }
                         }
-
                     } else {
-                        // The move is not valid so reset everything
-                        copyPieces(pieces, simPieces);
-                        activeP.resetPosition();
-                        activeP = null;
+                        // If the player is holding a piece, simulate the move.
+                        simulate();
                     }
-
                 }
+
+                // MOUSE BUTTON RELEASED
+                if (mouse.pressed == false) {
+
+                    if (activeP != null) {
+
+                        if (validSquare) {
+
+                            // MOVE CONFIRMED
+                            // Update the piece list in case a piece has been captured and removed during
+                            // the simulation
+                            copyPieces(simPieces, pieces);
+                            activeP.updatePosition();
+                            if (castlingP != null) {
+                                castlingP.updatePosition();
+                            }
+
+                            if (isKingInCheck() && isCheckMate()) {
+                                System.out.println("King is in check");
+                                gameover = true;
+                            } else if (isStaleMate() && isKingInCheck() == false) {
+                                stalemate = true;
+                            } else { // The game is still going on
+                                if (canPromote()) {
+                                    promotion = true;
+                                } else {
+                                    changePlayer();
+                                }
+                            }
+
+                        } else {
+                            // The move is not valid so reset everything
+                            copyPieces(pieces, simPieces);
+                            activeP.resetPosition();
+                            activeP = null;
+                        }
+
+                    }
+                }
+
             }
 
         }
 
+    }
+
+    private void doAITurn() {
+        Move move = ai.getMove(this, aiDifficulty, aiColor);
+        if (move != null) {
+            applyMove(move);
+        }
     }
 
     private void simulate() {
@@ -557,6 +582,279 @@ public class GamePanel extends JPanel implements Runnable {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Legal-move generation
+    // -----------------------------------------------------------------
+    /**
+     * Captures every mutable field of one Piece so it can be fully restored.
+     */
+    private static class PieceState {
+
+        final Piece piece;
+        final int col, row, x, y, preCol, preRow;
+        final boolean moved, twoStepped;
+        final Piece hittingP;
+
+        PieceState(Piece p) {
+            piece = p;
+            col = p.col;
+            row = p.row;
+            x = p.x;
+            y = p.y;
+            preCol = p.preCol;
+            preRow = p.preRow;
+            moved = p.moved;
+            twoStepped = p.twoStepped;
+            hittingP = p.hittingP;
+        }
+
+        void restore() {
+            piece.col = col;
+            piece.row = row;
+            piece.x = x;
+            piece.y = y;
+            piece.preCol = preCol;
+            piece.preRow = preRow;
+            piece.moved = moved;
+            piece.twoStepped = twoStepped;
+            piece.hittingP = hittingP;
+        }
+    }
+
+    /**
+     * Full snapshot of GamePanel state used by getLegalMoves to probe candidate
+     * moves without permanently mutating anything.
+     */
+    private class GameStateSnapshot {
+
+        final ArrayList<Piece> savedPieces;
+        final ArrayList<Piece> savedSimPieces;
+        final ArrayList<PieceState> pieceStates;
+        final Piece savedActiveP, savedCastlingP, savedCheckingP;
+        final int savedCurrentColor;
+        final boolean savedCanMove, savedValidSquare;
+        final boolean savedPromotion, savedGameover, savedStalemate;
+
+        GameStateSnapshot() {
+            savedPieces = new ArrayList<>(pieces);
+            savedSimPieces = new ArrayList<>(simPieces);
+            pieceStates = new ArrayList<>(pieces.size());
+            for (Piece p : pieces) {
+                pieceStates.add(new PieceState(p));
+            }
+            savedActiveP = activeP;
+            savedCastlingP = castlingP;
+            savedCheckingP = checkingP;
+            savedCurrentColor = currentColor;
+            savedCanMove = canMove;
+            savedValidSquare = validSquare;
+            savedPromotion = promotion;
+            savedGameover = gameover;
+            savedStalemate = stalemate;
+        }
+
+        void restore() {
+            for (PieceState ps : pieceStates) {
+                ps.restore();
+            }
+            pieces.clear();
+            pieces.addAll(savedPieces);
+            simPieces.clear();
+            simPieces.addAll(savedSimPieces);
+            activeP = savedActiveP;
+            castlingP = savedCastlingP;
+            checkingP = savedCheckingP;
+            currentColor = savedCurrentColor;
+            canMove = savedCanMove;
+            validSquare = savedValidSquare;
+            promotion = savedPromotion;
+            gameover = savedGameover;
+            stalemate = savedStalemate;
+        }
+    }
+
+    /**
+     * Returns every legal move available to the given color from the current
+     * board position. Pawn promotions are returned as queen promotions. Does
+     * not mutate board state, game flags, or whose turn it is.
+     */
+    public ArrayList<Move> getLegalMoves(int color) {
+        ArrayList<Move> legal = new ArrayList<>();
+        GameStateSnapshot snap = new GameStateSnapshot();
+
+        // Build candidate list before any probing mutates the board
+        ArrayList<Piece> candidates = new ArrayList<>();
+        for (Piece p : pieces) {
+            if (p.color == color) {
+                candidates.add(p);
+            }
+        }
+
+        for (Piece piece : candidates) {
+            for (int targetCol = 0; targetCol < 8; targetCol++) {
+                for (int targetRow = 0; targetRow < 8; targetRow++) {
+                    snap.restore(); // start each probe from clean state
+                    if (probeLegal(piece, targetCol, targetRow, color)) {
+                        boolean isPromoRow = piece.type == Type.PAWN
+                                && targetRow == (color == WHITE ? 0 : 7);
+                        legal.add(isPromoRow
+                                ? new Move(piece, targetCol, targetRow, Type.QUEEN)
+                                : new Move(piece, targetCol, targetRow));
+                    }
+                }
+            }
+        }
+
+        snap.restore(); // leave board exactly as it was before the call
+        return legal;
+    }
+
+    /**
+     * Tests whether moving piece to (toCol, toRow) is legal for the given
+     * color, using the same canMove/isIllegal/opponentCanCaptureKing chain as
+     * applyMove. Mutates state freely; caller must restore via
+     * GameStateSnapshot.
+     */
+    private boolean probeLegal(Piece piece, int toCol, int toRow, int color) {
+        activeP = piece;
+        currentColor = color; // ensures opponentCanCaptureKing finds the right king
+
+        copyPieces(pieces, simPieces);
+        if (castlingP != null) {
+            castlingP.col = castlingP.preCol;
+            castlingP.x = castlingP.getX(castlingP.col);
+            castlingP = null;
+        }
+
+        activeP.hittingP = null;
+        activeP.col = toCol;
+        activeP.row = toRow;
+
+        if (!activeP.canMove(toCol, toRow)) {
+            return false;
+        }
+        if (activeP.hittingP != null) {
+            simPieces.remove(activeP.hittingP.getIndex());
+        }
+        checkCastling();
+        return !isIllegal(activeP) && !opponentCanCaptureKing();
+    }
+
+    /**
+     * Applies a move programmatically without mouse interaction. Returns true
+     * if the move was legal and the board state was updated. Preserves all
+     * existing rules: captures, castling, en passant, self-check prevention,
+     * promotion, check/checkmate/stalemate.
+     *
+     * For pawn promotion: supply move.promoteTo (QUEEN/ROOK/BISHOP/KNIGHT) to
+     * resolve automatically. If move.promoteTo is null, the game enters the
+     * normal promotion state and waits for mouse input.
+     */
+    public boolean applyMove(Move move) {
+        // Guard: reject invalid or untimely calls
+        if (move == null || move.piece == null) {
+            return false;
+        }
+        if (gameover || stalemate || promotion) {
+            return false;
+        }
+        if (move.piece.color != currentColor) {
+            return false;
+        }
+        if (!pieces.contains(move.piece)) {
+            return false;
+        }
+
+        activeP = move.piece;
+
+        // Reset simulation to the current authoritative state, same as simulate() does
+        copyPieces(pieces, simPieces);
+        if (castlingP != null) {
+            castlingP.col = castlingP.preCol;
+            castlingP.x = castlingP.getX(castlingP.col);
+            castlingP = null;
+        }
+
+        // Clear stale hit state before canMove inspects the board
+        activeP.hittingP = null;
+
+        // Position the piece at the target square (mirrors simulate()'s mouse-to-col mapping)
+        activeP.col = move.toCol;
+        activeP.row = move.toRow;
+
+        if (activeP.canMove(move.toCol, move.toRow)) {
+            if (activeP.hittingP != null) {
+                simPieces.remove(activeP.hittingP.getIndex());
+            }
+            checkCastling();
+
+            if (!isIllegal(activeP) && !opponentCanCaptureKing()) {
+                // Commit the move, mirroring the mouse-release confirmation block
+                copyPieces(simPieces, pieces);
+                activeP.updatePosition();
+                if (castlingP != null) {
+                    castlingP.updatePosition();
+                }
+
+                if (isKingInCheck() && isCheckMate()) {
+                    gameover = true;
+                } else if (isStaleMate() && !isKingInCheck()) {
+                    stalemate = true;
+                } else if (canPromote()) {
+                    if (move.promoteTo != null) {
+                        applyPromotion(move.promoteTo);
+                    } else {
+                        promotion = true; // caller must handle via UI
+                    }
+                } else {
+                    changePlayer();
+                }
+
+                canMove = false;
+                validSquare = false;
+                if (!promotion) {
+                    activeP = null;
+                }
+                return true;
+            }
+        }
+
+        // Move was illegal -- undo all mutations to shared piece objects
+        if (castlingP != null) {
+            castlingP.col = castlingP.preCol;
+            castlingP.x = castlingP.getX(castlingP.col);
+            castlingP = null;
+        }
+        activeP.resetPosition();
+        copyPieces(pieces, simPieces);
+        canMove = false;
+        validSquare = false;
+        activeP = null;
+        return false;
+    }
+
+    private void applyPromotion(Type promoteTo) {
+        switch (promoteTo) {
+            case ROOK:
+                simPieces.add(new Rook(currentColor, activeP.col, activeP.row));
+                break;
+            case KNIGHT:
+                simPieces.add(new Knight(currentColor, activeP.col, activeP.row));
+                break;
+            case BISHOP:
+                simPieces.add(new Bishop(currentColor, activeP.col, activeP.row));
+                break;
+            default:
+                simPieces.add(new Queen(currentColor, activeP.col, activeP.row));
+                break;
+        }
+        simPieces.remove(activeP.getIndex());
+        copyPieces(simPieces, pieces);
+        activeP = null;
+        promotion = false;
+        changePlayer();
+    }
+
     public void paintComponent(Graphics g) {
         super.paintComponent(g);
 
@@ -649,9 +947,9 @@ public class GamePanel extends JPanel implements Runnable {
         }
         if (stalemate) {
             String s = "";
-            if (currentColor == WHITE) {                
+            if (currentColor == WHITE) {
                 s = "Stalemate";
-            } else {               
+            } else {
                 s = "Stalemate";
             }
             g2.setFont(new Font("Arial", Font.BOLD, 50));
